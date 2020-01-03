@@ -249,20 +249,30 @@ def pronostico():
 --------------------------------------------------------
 """
 def tiempo_actual_json():
+    """Provee el estado actual del tiempo en formato JSON """
     tiempo = tiempo_actual()
     return json.dump(tiempo, indent = '\t')
 
 def tiempo_en_localidad(localidad):
+    """Provee el estado actual del tiempo para una determinada 
+    localidad.
+    Devuelve un diccionario con los datos obtenidos. """
     return tiempo_actual()[localidad.lower().strip(" ")]
 
 def pronostico_en_localidad(localidad):
+    """Provee el pronostico del tiempo a 5 días en la localidad 
+    deseada. Devuelve un diccionario con los resultados obtenidos. """
     datos_pronostico = pronostico()
     return datos_pronostico[localidad.upper().replace(" ", "_")]
 
 def pronostico_json():
+    """Devuelve el pronostico del tiempo a 5 días para todas las 
+    localidades en formato JSON"""
     datos_pronostico = pronostico()
     return json.dump(datos_pronostico, cls = JSONEncoderPronosticos, indent = '\t')
 
 def pronostico_localidad_json(localidad):
+    """Provee el pronostico del tiempo a 5 días en la localidad indicada.
+    Devuelve los resultados en formato JSON. """
     datos_pronostico = pronostico_en_localidad(localidad)
     return json.dumps(datos_pronostico, cls = JSONEncoderPronosticos, indent = '\t')
