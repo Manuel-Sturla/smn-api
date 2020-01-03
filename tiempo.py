@@ -1,121 +1,268 @@
 import requests
 import zipfile
 import io
-import datetime
+from datetime import datetime as dt
 import json
-from dataclasses import dataclass
 
-CALMA_STR = 'Calma'
+"""
+--------------------------------------------------------
+                        CONSTANTES
+--------------------------------------------------------
+"""
 URL_DESCARGA = 'https://ssl.smn.gob.ar/dpd/zipopendata.php?dato='
 PARAM_TIEMPO = 'tiepre'
 PARAM_PRONOSTICO = 'pron5d'
 TEXT_ENCODING = 'latin-1'
 
-@dataclass
-class Tiempo:
-    fecha_hora: datetime.datetime
-    estado: str
-    visibilidad: str
-    temperatura: float
-    termica: float
-    humedad: int
-    viento_dir: str
-    viento_vel: int
-    presion: float
+NO_TERMICA = "No se calcula"
+DIR_VARIABLE = "Variable"
+LOCALIDAD = "localidad"
+FECHA = "fecha"
+DESCRIPCION = "desc"
+VISIBILIDAD = "visibilidad"
+TEMP = "temp"
+TERMICA = "termica"
+HUMEDAD = "humedad"
+VIENTO = "viento"
+PRESION = "presion"
+VIENTO_DIR = "viento_dir"
+VIENTO_VEL = "viento_vel"
+PRECIP = "precip"
+MESES_A_INGLES = {"Enero":"January",
+                  "Febrero":"February",
+                  "Marzo":"March",
+                  "Abril":"April",
+                  "Mayo":"May",
+                  "Junio":"June",
+                  "Julio":"July",
+                  "Agosto":"August",
+                  "Septiembre":"September",
+                  "Octubre":"October",
+                  "Noviembre":"November",
+                  "Diciembre":"December",
+                  }
+MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
 
-@dataclass
-class Pronostico:
-    fecha_hora: datetime.datetime
-    temperatura: float
-    viento_dir: int
-    viento_vel: int
-    precipitacion: float
+"""
+--------------------------------------------------------
+            CLASES Y FUNCIONES AUXILIARES
+--------------------------------------------------------
+"""
+class JSONEncoderPronosticos(json.JSONEncoder):
+    """Codificador de JSON preparado para codificar los objetos del pronostico """
+    def default(self, o):
+        if isinstance(o, PronosticoLocalidad):
+            return o.serializar()
+        return json.JSONEncoder.default(self, o)
 
-meses = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio',
-        'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
-meses_pronostico = [mes[:3].upper() for mes in meses]
+class PronosticoLocalidad():
+    """
+    Representa el pronostico del tiempo para una localidad determinada.
+    Permite tener el pronostico para distintas horas y distintos dias.
+    """
+    def __init__(self):
+        self.pronosticos = {}
+    def agregar_pronostico(self, fecha, hora, temp, viento_dir, viento_vel, precip):
+        """
+        Agrega el pronostico del tiempo para una fecha y horario determinado 
+        Si ya se tiene un pronostico para esa fecha y horario se sobreescribe.
+        """
+        pron = {}
+        pron[TEMP] = float(temp)
+        pron[VIENTO_DIR] = int(viento_dir)
+        pron[VIENTO_VEL] = float(viento_vel)
+        pron[PRECIP] = float(precip)
+
+        dia, mes, anio = fecha.split("/")
+        fecha_dt = dt(day = int(dia), month = MESES.index(mes)+1, year= int(anio))
+        hora = hora[:-3]
+        d = self.pronosticos.get(fecha_dt, {})
+        d[hora] = pron
+        self.pronosticos[fecha_dt] = d
+    def __str__(self):
+        """ devuelve una representacion del pronostico imprimible """
+        return str(self.pronosticos)
+    def obtener_pronostico(self, dia, mes, anio):
+        return self.pronosticos[dt(day = int(dia), month=int(mes), year = int(anio))]
+    def serializar(self):
+        """ Devuelve una representacion del estado actual del objeto PronosticoLocalidad"""
+        rep = {}
+        for k, v in self.pronosticos.items():
+            rep[k.strftime("%d-%m-%Y")] = v
+        return rep
+
 
 def descargar_datos(param):
+    """Descarga los datos desde la pagina oficial del servicio meteorologico
+    nacional ( https://smn.gob.ar ). Luego descomprime el archivo, lo abre y 
+    lo devuelve. 
+    ATENCION: hay que cerrar el archivo luego de utilizarlo.
+    
+    """
     r = requests.get(URL_DESCARGA + param)
     z = zipfile.ZipFile(io.BytesIO(r.content))
     nombre = z.namelist()[0]
-    return list(io.TextIOWrapper(z.open(nombre), TEXT_ENCODING))
+    archivo = io.TextIOWrapper(z.open(nombre), TEXT_ENCODING)
+    return archivo
 
-def jsonificar(objeto):
-    return json.JSONEncoder().encode({
-        k : v.isoformat() if type(v) == datetime.datetime else v
-        for (k, v) in objeto.__dict__.items()
-    })
 
-def dict_a_json(dic):
-    if dic:
-        resultado = '{'
-        for (k, v) in dic.items():
-            resultado += '"' + k + '": ' + v + ', '
-        return resultado[:-2] + '}'
-    return '{}'
+def transformar_unidad(n, unidad_inicio, unidad_destino):
+    """
+    Hace el cambio de unidad  de 'n' desde la unidad de inicio a la unidad destino y lo devuelve
+    """        
+    unidades = ["mm", "cm", "dm", "mts", "dam", "hm", "km"]
+    if unidad_inicio == unidad_destino: return n
+    if unidad_inicio not in unidades or unidad_destino not in unidades:
+        raise ValueError("No se reconoce la unidad")
+    indice_inicio = unidades.index(unidad_inicio) #3
+    indice_destino = unidades.index(unidad_destino) #6
+    return (10**(indice_destino-indice_inicio)) * n
+
+
+
+def obtener_visibilidad_km(visibilidad):
+    """
+    Verifica si la visibilidad esta presentada en una unidad menor a km
+    lo convierte a km y lo devuelve.
+    Caso visto en el documento: "Menor a 100mts"
+    """
+    visibilidad_n = 0
+    visibilidad_unidad = ""
+    spliteado = visibilidad.split(' ')
+    i = 0
+    while not visibilidad[i].isdigit():
+        i += 1
+    aux = []
+    while visibilidad[i].isdigit() or visibilidad[i] == ".":
+        aux.append(visibilidad[i])
+        i += 1
+    visibilidad_n = float(''.join(aux))
+    while i < len(visibilidad):
+        char_act = visibilidad[i]
+        i += 1
+        if char_act == " ": continue
+        visibilidad_unidad += char_act
+    return transformar_unidad(visibilidad_n, visibilidad_unidad, "km")
+
+def parsear_linea_tiempo_presente(linea):
+    d = {}
+    print(linea)
+    localidad, fecha, hora, descripcion, visibilidad, temperatura, termica, humedad, viento, presion = linea.strip('/').split(';')
+    viento_sep = viento.split()
+    if len(viento_sep) == 1: 
+        viento_dir = viento_sep[0]
+        viento_vel = 0
+    elif len(viento_sep) == 2:
+        viento_dir, viento_vel = viento_sep
+    else:
+        #Si tiene direcciones variables
+        #Caso visto en el documento: "Direcciones variables  3"
+        viento_dir = DIR_VARIABLE
+        viento_vel = viento_sep[-1]
+
+    dia, mes, anio = fecha.split("-")
+    #Check
+    d[FECHA] = dt.strptime(f"{dia}-{MESES_A_INGLES[mes]}-{anio} {hora}", '%d-%B-%Y %H:%M')
+    d[DESCRIPCION] = descripcion
+
+    d[VISIBILIDAD] = obtener_visibilidad_km(visibilidad)
+    d[TEMP] = float(temperatura)
+    if termica == NO_TERMICA or not termica:
+        d[TERMICA] = None
+    else:
+        d[TERMICA] = float(termica)
+    d[HUMEDAD] = float(humedad.strip())
+    d[VIENTO] = (viento_dir, float(viento_vel))
+
+    presion = presion.strip(" /\n") 
+    if presion.isdigit():
+        d[PRESION] = float(presion)
+    else:
+        d[PRESION] = None
+
+    return localidad.strip().lower(), d
+
+def parsear_linea_pronostico(linea):
+    """Parsea una linea del pronostico. Esta se supone que tiene el formato:
+      Fecha                   Temp(°C)   Viento(dir|km/h)   Precipitacion(mm)
+      31/DIC/2019 00Hs.        23.4       102 |   9         0.4 
+    Devuelve una tupla con la forma: (fecha, hora, temp, viento_dir, viento_vel, precip)
+    """
+    spliteado = linea.split()
+    spliteado.remove('|')
+    return spliteado
+
+def buscar_primer_caracter(linea):
+    for c in linea:
+        if c != " ":
+            return c
+
 
 def tiempo_actual():
-    data = [renglon.lstrip().rstrip()[:-2].split(';') for renglon
-                in descargar_datos(PARAM_TIEMPO)]
+    """
+    Descarga los datos del tiempo actual para todas las localidades,
+    las parsea a un diccionario y las devuelve.
+    """
+    archivo = descargar_datos(PARAM_TIEMPO)
     tiempo = {}
-    for linea in data:
-        estacion = linea[0]
-        (dia, mes, anno) = linea[1].split('-')
-        (hora, minuto) = [int(n) for n in linea[2].split(':')]
-        fecha_hora = datetime.datetime(int(anno), meses.index(mes) + 1,
-                                        int(dia), hora, minuto)
-        estado = linea[3]
-        visibilidad = linea[4]
-        temperatura = float(linea[5])
-        try:
-            termica = float(linea[6])
-        except:
-            termica = None
-        humedad = int(linea[7])
-        if linea[8] == CALMA_STR:
-            (viento_dir, viento_vel) = (CALMA_STR, 0)
-        else:
-            viento_vel = linea[8].split()[-1]
-            viento_dir = linea[8][:-len(viento_vel)].rstrip()
-            viento_vel = int(viento_vel)
-        presion = float(linea[9])
-        tiempo[estacion] = Tiempo(fecha_hora, estado, visibilidad,
-                            temperatura, termica, humedad, viento_dir,
-                            viento_vel, presion)
+    for linea in archivo:
+        localidad, datos = parsear_linea_tiempo_presente(linea)
+        tiempo[localidad] = datos
+        
+    archivo.close()
     return tiempo
 
 def pronostico():
-    data = descargar_datos(PARAM_PRONOSTICO)[5:]
-    linea = 0
+    """
+    Descarga los datos del pronostico del tiempo a 5 dias para todas 
+    las localidades, los parsea y guarda en un diccionario y los devuelve.
+    """
+    archivo = descargar_datos(PARAM_PRONOSTICO)
+
     pronosticos = {}
-    while linea < len(data)-1:
-        estacion = data[linea].lstrip().rstrip()
-        linea += 5
-        pronostico_estacion = []
-        for i in range(40):
-            datos = data[linea].split()
-            (dia, mes, anno) = datos[0].split('/')
-            fecha_hora = datetime.datetime(int(anno),
-                                        meses_pronostico.index(mes),
-                                        int(dia), int(datos[1][:2]))
-            temperatura = float(datos[2])
-            viento_dir = int(datos[3])
-            viento_vel = int(datos[5])
-            precipitacion = float(datos[6])
-            pronostico_estacion.append(Pronostico(fecha_hora, temperatura,
-                                                    viento_dir, viento_vel,
-                                                    precipitacion))
-            linea += 1
-        pronosticos[estacion] = pronostico_estacion
-        linea += 1
+    linea_ant = None
+    linea_ant_primero = ""
+    localidad = ""
+    for linea in archivo:
+        primero = buscar_primer_caracter(linea)
+        if primero == '=' and linea_ant_primero.isalpha():
+            #Aca las localidades se guardan en mayuscula y con _ como separador
+            localidad = linea_ant.strip(' \n') 
+
+        if primero.isdigit():
+            if localidad in pronosticos:
+                pronosticos[localidad].agregar_pronostico(*parsear_linea_pronostico(linea))
+            else:
+                pron = PronosticoLocalidad()
+                pron.agregar_pronostico(*parsear_linea_pronostico(linea))
+                pronosticos[localidad] = pron
+
+        linea_ant = linea
+        linea_ant_primero = primero
+
+    archivo.close()
     return pronosticos
 
+"""
+--------------------------------------------------------
+                        API
+--------------------------------------------------------
+"""
 def tiempo_actual_json():
     tiempo = tiempo_actual()
-    return dict_a_json({k : jsonificar(v) for (k, v) in tiempo.items()})
+    return json.dump(tiempo, indent = '\t')
+
+def tiempo_en_localidad(localidad):
+    return tiempo_actual()[localidad.lower().strip(" ")]
+
+def pronostico_en_localidad(localidad):
+    datos_pronostico = pronostico()
+    return datos_pronostico[localidad.upper().replace(" ", "_")]
 
 def pronostico_json():
     datos_pronostico = pronostico()
-    return dict_a_json({k : '['+', '.join([jsonificar(i) for i in v])+']'
-                                for (k, v) in datos_pronostico.items()})
+    return json.dump(datos_pronostico, cls = JSONEncoderPronosticos, indent = '\t')
+
+def pronostico_localidad_json(localidad):
+    datos_pronostico = pronostico_en_localidad(localidad)
+    return json.dumps(datos_pronostico, cls = JSONEncoderPronosticos, indent = '\t')

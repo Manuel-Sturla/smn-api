@@ -1,0 +1,6 @@
+#Cosas que faltan
+Chequear: 
+ * La forma de transformar a dt en el pronostico presente
+ * Que los nombres de los meses sean consistentes
+ * Que los nombres de las localidades sean consisntentes (formato, etc)
+ 
