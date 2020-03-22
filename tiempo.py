@@ -43,6 +43,7 @@ MESES_A_INGLES = {"Enero":"January",
                   }
 MESES = ["ENE", "FEB", "MAR", "ABR", "MAY", "JUN", "JUL", "AGO", "SEP", "OCT", "NOV", "DIC"]
 
+ERROR_FECHA_INVALIDA = "La fecha ingresada {}/{}/{} no se encuentra en el pronostico"
 """
 --------------------------------------------------------
             CLASES Y FUNCIONES AUXILIARES
@@ -83,7 +84,10 @@ class PronosticoLocalidad():
         """ devuelve una representacion del pronostico imprimible """
         return str(self.pronosticos)
     def obtener_pronostico(self, dia, mes, anio):
-        return self.pronosticos[dt(day = int(dia), month=int(mes), year = int(anio))]
+        fecha = dt(day = int(dia), month=int(mes), year = int(anio))
+        if fecha not in self.pronosticos:
+            raise ValueError(ERROR_FECHA_INVALIDA.format(dia, mes, anio))
+        return self.pronosticos[fecha]
     def serializar(self):
         """ Devuelve una representacion del estado actual del objeto PronosticoLocalidad"""
         rep = {}
